@@ -1,0 +1,15 @@
+
+/runs
+/draw/saved
+/datasets
+/build
+/dist
+
+**/.vscode
+**/__pycache__
+**/*.egg-info
+**/*.res
+**/*.sol
+**/*.pul
+**/*.sav
+**/*.sav~
