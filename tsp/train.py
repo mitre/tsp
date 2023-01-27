@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from time import time
+import os.path as osp
 
 from tsp.logger import Logger, get_log_dir
 from tsp.datagen import TspDataset
@@ -13,7 +14,9 @@ class TspTrainer:
     TODO
     """
 
-    def __init__(self, dataset, agent, algo, run_name=None, eval_datasets=None):
+    def __init__(
+        self, dataset, agent, algo, run_name=None, eval_datasets=None, log_dir=None, resume=False
+    ):
         """
         Provide TSP data, agent, and algorithm.
 
@@ -27,10 +30,15 @@ class TspTrainer:
         self.run_name = run_name
 
         if run_name is not None:
-            log_dir = get_log_dir(run_name)
-            Logger.init(log_dir)
+
+            if log_dir is None:
+                log_dir = get_log_dir(run_name)
+
+            output_path = osp.join(log_dir, run_name)
+            self.last_itr, self.last_time = Logger.init(output_path, resume=resume)
         else:
             Logger.dummy_init()
+            self.last_itr = self.last_time = 0
 
         self.eval_data = []
         for name, eval_dataset in eval_datasets:
@@ -99,14 +107,15 @@ class TspTrainer:
                 f"Evaluating offline every {eval_period} iterations with {eval_batch_size} batch-size"
             )
 
-        iteration = 1
+        iteration = self.last_itr + 1
+        time_offset = self.last_time
         start_time = time()
         for epoch_idx in range(epochs):
 
             for batch_idx, problem_batch in tqdm(enumerate(dataloader)):
                 # train routine
                 self.agent.train_mode()
-                self.algo.optimize_agent(self.agent, problem_batch)
+                self.algo.optimize_agent(iteration, self.agent, problem_batch)
 
                 # (offline) eval routine
                 self.agent.eval_mode()
@@ -114,7 +123,7 @@ class TspTrainer:
 
                 # log writing, checkpoint saving, etc.
                 Logger.log("iteration", iteration)
-                Logger.log("time", time() - start_time)
+                Logger.log("time", time() - start_time + time_offset)
                 Logger.dump()
 
                 if iteration % check_period == 0:

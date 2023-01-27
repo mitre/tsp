@@ -11,7 +11,53 @@ def get_log_dir(suffix=""):
     pack_path = osp.dirname(tsp.__file__)
     install_path = osp.dirname(pack_path)
     run_path = osp.join(install_path, "runs")
-    return osp.join(run_path, suffix)
+    return run_path
+
+
+def get_latest_check_path(name, log_dir=None):
+    """
+    Finds path of latest checkpoint based on
+    run name and logging directory. 
+    """
+    if log_dir is not None:
+        log_dir = osp.abspath(osp.expanduser(log_dir))
+    else:
+        log_dir = get_log_dir()
+    
+    run_path = osp.join(log_dir, name)
+    file_names = [osp.basename(fp) for fp in os.listdir(run_path)]
+    chkpts = filter(lambda x: x.startswith("params") and x.endswith(".pt"), file_names)
+
+    if not chkpts:
+        raise ValueError(f"Attempting to load checkpoint path from run with no checkpoints in expected format: '{run_path}'")
+
+    chkpts = sorted(chkpts, key=lambda x: int(x.split('_')[-1].split('.')[0]))
+
+    return osp.join(log_dir, name, chkpts[-1])
+
+
+def get_resume_info(csv_path):
+    """Returns last iteration and time of a csv log."""
+    with open(csv_path, "r") as csv:
+        logs = csv.readlines()
+    num_logs = len(logs) - 1  # -1 from header line
+
+    def extract_content(linestr):
+        tokens = linestr.strip().split(",")
+        return list(filter(lambda x: x != "", tokens))
+    
+    header_tokens = extract_content(logs[0])
+    last_tokens = extract_content(logs[-1])
+
+    req_keys = sorted(header_tokens)
+    
+    itr_idx = header_tokens.index("iteration")
+    time_idx = header_tokens.index("time")
+
+    last_itr = int(last_tokens[itr_idx])
+    last_time = float(last_tokens[time_idx])
+
+    return last_itr, last_time, req_keys, num_logs
 
 
 class Logger:
@@ -40,11 +86,12 @@ class Logger:
     dummy: bool = False
 
     @classmethod
-    def init(cls, path_dir, csv_name="progress", chk_name="params"):
+    def init(cls, path_dir, csv_name="progress", chk_name="params", resume=False):
         """
         path_dir: string of directory to store logging info (creates if does not exist)
         csv_name: string of csv file name where logs will get dumped
         chk_name: string of pt file name where model checkpoints will get stored
+        resume: boolean letting logger know to append to existing log (and not raise exception)
         """
         if cls.setup:
             raise Exception("Global Logger already initialized!")
@@ -58,7 +105,7 @@ class Logger:
             osp.abspath(osp.expanduser(path_dir)), csv_name + ".csv"
         )
         try:
-            open(cls.csv_path, "x")
+            open(cls.csv_path, "a" if resume else "x")
         except:
             raise Exception(
                 f"Could not create log file at {cls.csv_path}\nPath either already exists or is illegal"
@@ -68,13 +115,23 @@ class Logger:
         cls.chk_base_path = osp.join(
             osp.abspath(osp.expanduser(path_dir)), chk_name
         )  # finalized with itr info
-        cls.last_chk_path = None
+        cls.last_chk_path = None  # always keep checkpoints when resuming
 
         cls.store = dict()
-        cls.req_keys = None
         cls.prefix = None
-        cls.count = 0
         cls.setup = True
+
+        if resume:
+            last_itr, last_time, req_keys, num_logs = get_resume_info(cls.csv_path)
+            cls.req_keys = req_keys
+            cls.count = num_logs
+        else:
+            last_itr, last_time = 0, 0
+            cls.req_keys = None
+            cls.count = 0
+
+        return last_itr, last_time
+
 
     @classmethod
     def dummy_init(cls):

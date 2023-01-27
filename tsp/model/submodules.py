@@ -59,7 +59,7 @@ class PositionalEncoding(nn.Module):
     decoder, where this transpose already needs to occur).
     """
 
-    def __init__(self, d_model, max_len=100, dropout=0.0):
+    def __init__(self, d_model, max_len=1001, dropout=0.0):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 

@@ -4,7 +4,10 @@ import torch.nn.functional as F
 
 from tsp.model.submodules import TspEncoder, PositionalEncoding, TspCritic
 from tsp.utils import generate_padding_mask, reset_pads
+from tsp.select import greedy_select
 from tsp.datagen import SENTINEL
+
+from tsp.agent import TspAgent
 
 
 class TspMontyStyleDecoder(nn.Module):
@@ -243,3 +246,51 @@ class TspMsAcModel(TspMontyStyleModel):
         selections = selections[:, 1:]  # remove start token before returning
 
         return selections, select_idxs, log_probs, values
+
+
+class BaselineModel(nn.Module):
+    """
+    Classs representing the model baseline
+    """
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, problems, select_fn):
+        selections, select_idxs, log_probs = self.model(problems, select_fn)
+        return selections, select_idxs, log_probs, selections
+
+
+class TspMsGreedyBaselineModel(nn.Module):
+    """
+    Actor-critic Monty-style model where the
+    critic is a seperate policy. The baseline
+    can be computed as the greedy rollout from this
+    policy, which is updated only when the actor
+    policy performs better on a held-out set.
+    """
+
+    def __init__(self, dim_model=128, num_enc_layers=3, num_dec_layers=3):
+        super().__init__()
+        self.dim_model = dim_model
+        self.num_enc_layers = num_enc_layers
+        self.num_dec_layers = num_dec_layers
+
+        self.actor = TspMontyStyleModel(dim_model, num_enc_layers, num_dec_layers)
+        self.critic = TspMontyStyleModel(dim_model, num_enc_layers, num_dec_layers)
+
+    def forward(self, problems, select_fn):
+        selections, select_idxs, log_probs = self.actor(problems, select_fn)
+
+        with torch.no_grad():
+            self.critic.eval()
+            crt_sel, _, _ = self.critic(problems, greedy_select)
+
+        return selections, select_idxs, log_probs, crt_sel
+
+    def sync_baseline(self):
+        self.critic.load_state_dict(self.actor.state_dict())
+
+    def critic_model(self):
+        return TspAgent(BaselineModel(self.critic), use_available_device=False)
