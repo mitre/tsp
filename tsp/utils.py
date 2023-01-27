@@ -1,14 +1,17 @@
+from numpy.lib import select
 import torch
 from torch.distributions.categorical import Categorical
 import numpy as np
 import pkg_resources
 import random
 
-from tsp.datagen import TspDataset
+from tsp.datagen import SENTINEL
 
 
 def get_coords(batch_size, problem_size):
     """Get single-tensor problems dataset with shape (N, S, 2)."""
+    from tsp.datagen import TspDataset
+
     dataset = TspDataset(size=problem_size, num_samples=batch_size)
     return torch.stack(dataset[:], dim=0)
 
@@ -20,28 +23,36 @@ def get_costs(problems, select_idxs=None):
 
     Modified to allow not passing selection indices, in which case we assume the problems stack
     contains solutions where nodes are already sorted in order of intended travel.
+
+    Also modified to support variable problem sizes, where shorter problems are padded by sentinels
+    defined in datagen.py.
     """
     if select_idxs is not None:
-        # Check that tours are valid, i.e. contain 0 to n -1
-        all_valid_tours = (
-            torch.arange(select_idxs.size(1), out=select_idxs.data.new())
-            .view(1, -1)
-            .expand_as(select_idxs)
-            == select_idxs.data.sort(1)[0]
-        ).all()
+        # (Removed check for tour validity as this is non-trivial with variable problem sizes)
 
-        if not all_valid_tours:
-            raise ValueError("Invalid tour(s) given by 'select_idxs'")
+        pad_mask = generate_idxs_pad_mask(select_idxs)
 
-        # Gather solution in order of tour
+        # Gather solution in order of tour, swapping sentinels with first index to not break gather
+        select_idxs = reset_pads(select_idxs, pad_mask, val=0)
         s = problems.gather(1, select_idxs.unsqueeze(-1).expand_as(problems))
+
+        # Reset padding locations to sentinel values
+        s = reset_pads(s, pad_mask, val=SENTINEL)
     else:
+        pad_mask = generate_padding_mask(problems)
         s = problems
 
     # Length is distance (L2-norm of difference) from each next location from its prev and of last from first
-    return (s[:, 1:] - s[:, :-1]).norm(p=2, dim=2).sum(1) + (s[:, 0] - s[:, -1]).norm(
-        p=2, dim=1
-    )
+    # Modified to handle padded problem tensors with varying sequence lengths
+    edge_costs = (s[:, 1:] - s[:, :-1]).norm(p=2, dim=2)
+    edge_costs = reset_pads(edge_costs, pad_mask[:, 1:])
+
+    seq_len = s.shape[1]
+    last_idxs = seq_len - pad_mask.sum(dim=1) - 1
+    last_nodes = batch_select_gather(s, last_idxs).squeeze(1)
+    circ_edge_costs = (s[:, 0] - last_nodes).norm(p=2, dim=1)
+
+    return edge_costs.sum(dim=1) + circ_edge_costs
 
 
 def all_to(tensors, device="cpu"):
@@ -70,6 +81,18 @@ def batch_dist_gather(distributions, batch_select_idxs):
     """
     select_idxs_g = batch_select_idxs.unsqueeze(dim=-1)
     return torch.gather(distributions, dim=-1, index=select_idxs_g).squeeze(-1)
+
+
+def pad_safe_dist_gather(distributions, batch_select_idxs, reset_val):
+    """
+    Adaptation of 'batch_dist_gather' which doesn't break
+    when 'batch_select_idxs' is padded with sentinels.
+    """
+    pad_mask = generate_idxs_pad_mask(batch_select_idxs)
+    safe_select_idxs = reset_pads(batch_select_idxs, pad_mask, val=0)
+
+    sel_dist = batch_dist_gather(distributions, safe_select_idxs)
+    return reset_pads(sel_dist, pad_mask, val=reset_val)
 
 
 def get_grad_norm(parameters):
@@ -116,7 +139,71 @@ def generate_square_subsequent_mask(sz):
     return mask
 
 
+def generate_padding_mask(problems):
+    """
+    Generates boolean mask where 'problems'
+    matches the sentinel used in datagen.
+    Assumes 'problems' is shape (N, S, 2)
+    or (S, N, 2), returning a mask matching
+    the shape of the first two dimensions.
+    """
+    return (problems == SENTINEL)[:, :, 0]
+
+
+def generate_idxs_pad_mask(idxs):
+    """
+    Like 'generate_padding_mask' for
+    for selection indices. Assumes
+    'idxs' is shape (N, S) and has
+    an integer datatype.
+
+    WARNING: sentinel value MUST
+    be interpretable as an integer
+    for this to work.
+    """
+    return idxs == int(SENTINEL)
+
+
+def reset_pads(tensor, pad_mask, val=0.0):
+    """
+    Sets each padded location defined
+    by 'pad_mask' in the the input 'tensor'.
+    'tensor' should have the same leading
+    dimensions as 'pad_mask'. Additional
+    dimensions are assumed to be feature
+    dimensions which zeroing is broadcasted
+    over. Defaults to setting at 0.0.
+    """
+    tensor = tensor.clone()
+    tensor[pad_mask] = val
+    return tensor
+
+
 def seed_rand_gen(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
+
+
+def perm_shuffle(problems, labels, perms):
+    """
+    Resort 'problems' and 'labels' according to
+    'perms'. i.e. if non-batched,
+    problem[label] == problem[perm][relabel]
+
+    Or in words, the relabelled indices are the
+    indices in the perms where you find the values
+    in the original labels.
+
+    Expects leading dimensions (N, S).
+    """
+    b, n, d = problems.shape
+
+    comp_perm_mat = np.stack([perms] * n, axis=1)
+    comp_lbl_mat = np.stack([labels] * n, axis=2)
+    batch_extract_idxs, _, relabels = (comp_perm_mat == comp_lbl_mat).nonzero()
+    relabels = relabels.reshape((b, n))
+
+    shuf_probs = problems[batch_extract_idxs, perms.flatten()].reshape((b, n, d))
+
+    return shuf_probs, relabels

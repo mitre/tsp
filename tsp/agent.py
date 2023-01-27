@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from tsp.select import sample_select
+from tsp.select import sample_select, create_use_labels
 from tsp.utils import all_to, batch_select_gather, is_installed
 from tsp.eval import oracle
 from tsp.bridge import ConcordeSolver
@@ -30,6 +30,18 @@ class TspAgent:
         """
         problems = problems.to(self.device)
         model_outputs = self.model(problems, self.select_fn)
+        return all_to(model_outputs, device="cpu")
+
+    def use(self, problems, labels):
+        """
+        Get predicted solutions and log-probs for optimization.
+        Expects problems to have shape (N, S, 2), where
+        'N' is the batch dim and 'S' is the problem
+        sequence dim.
+        """
+        selection_fn = create_use_labels(labels)
+        problems = problems.to(self.device)
+        model_outputs = self.model(problems, selection_fn)
         return all_to(model_outputs, device="cpu")
 
     @torch.no_grad()

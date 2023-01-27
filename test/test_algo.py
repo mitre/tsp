@@ -8,28 +8,36 @@ from tsp.algo import TspReinforce, TspA2C
 from tsp.utils import get_coords, get_grad_norm, float_equality
 
 
+def run_basic_loss_checks(tcase, problems, agent, algo):
+    agent_outputs = agent(problems)
+    loss = algo.loss(*agent_outputs)
+    tcase.assertEqual(len(loss.shape), 0)
+
+    for p in tcase.agent.parameters():
+        tcase.assertIsNone(p.grad)
+
+    tcase.optimizer.zero_grad()
+    loss.backward()
+
+    for p in tcase.agent.parameters():
+        tcase.assertIsNotNone(p.grad)
+
+
 class TestReinforce(unittest.TestCase):
     def setUp(self):
         self.problems = get_coords(batch_size=32, problem_size=10)
+        self.pad_problems = get_coords(batch_size=32, problem_size=range(5, 11))
         self.model = TspMontyStyleModel()
         self.agent = TspAgent(self.model)
         self.optimizer = torch.optim.Adam(self.agent.parameters())
 
-    def test_loss(self):
+    def test_loss_fixed_seq(self):
         algo = TspReinforce(self.optimizer)
+        run_basic_loss_checks(self, self.problems, self.agent, algo)
 
-        agent_outputs = self.agent(self.problems)
-        loss = algo.loss(*agent_outputs)
-        self.assertEqual(len(loss.shape), 0)
-
-        for p in self.agent.parameters():
-            self.assertIsNone(p.grad)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-
-        for p in self.agent.parameters():
-            self.assertIsNotNone(p.grad)
+    def test_loss_pad_seq(self):
+        algo = TspReinforce(self.optimizer)
+        run_basic_loss_checks(self, self.pad_problems, self.agent, algo)
 
     def test_grad_clip(self):
         algo_no_clip = TspReinforce(self.optimizer)
@@ -69,22 +77,23 @@ class TestReinforce(unittest.TestCase):
 class TestA2C(unittest.TestCase):
     def setUp(self):
         self.problems = get_coords(batch_size=32, problem_size=10)
+        self.pad_problems = get_coords(batch_size=32, problem_size=range(5, 11))
         self.model = TspMsAcModel()
         self.agent = TspAgent(self.model)
         self.optimizer = torch.optim.Adam(self.agent.parameters())
 
-    def test_loss(self):
+    def test_loss_fixed_seq(self):
         algo = TspA2C(self.optimizer)
+        run_basic_loss_checks(self, self.problems, self.agent, algo)
 
-        agent_outputs = self.agent(self.problems)
-        loss = algo.loss(*agent_outputs)
-        self.assertEqual(len(loss.shape), 0)
+    def test_loss_pad_seq(self):
+        algo = TspA2C(self.optimizer)
+        run_basic_loss_checks(self, self.pad_problems, self.agent, algo)
 
-        for p in self.agent.parameters():
-            self.assertIsNone(p.grad)
 
-        self.optimizer.zero_grad()
-        loss.backward()
+if __name__ == "__main__":
+    from tsp.logger import Logger
 
-        for p in self.agent.parameters():
-            self.assertIsNotNone(p.grad)
+    Logger.dummy_init()
+    torch.autograd.set_detect_anomaly(True)
+    unittest.main()

@@ -57,7 +57,9 @@ def evaluate_agent(agent, problem_size, num_samples, batch_size=None, best_of=1)
     problems = get_coords(num_samples, problem_size)
 
     if best_of > 1:
-        repeat_costs = batched_eval_repeat(agent, problems, best_of, batch_size=batch_size)
+        repeat_costs = batched_eval_repeat(
+            agent, problems, best_of, batch_size=batch_size
+        )
         costs, _ = torch.min(repeat_costs, dim=0)
     else:
         costs = batched_eval(agent, problems, batch_size)

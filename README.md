@@ -67,3 +67,21 @@ python test/run.py
 ```
 
 Note pytest and other testing module scripts will not work because Logger must first be initialized.
+
+## TODOs
+Core
+- Distributed GPU training
+- Non-iterative decoder-only policy
+
+Auxiliary
+- Pretty stdout printing
+- Naive external solver (e.g. nearest insertion)
+- Plotting optimality gaps, running averages, and horizontal bounds with plot.py (Visdom)
+- Undiscounted GAE for A2C
+
+Bugs
+- IO bug when using unittest with bridge.c_stderr_redirector (need PyConcorde to reproduce)
+- Bugs with parallel ConcordeSolver use (redirectors appear to not be thread-safe)
+    - Add parallel support in launch/gen_supervised_dataset.py after fixing this
+- "inf" points in line plot result in graph not being plotted by Visdom (can replace with "nan" which displays as hole)
+

@@ -1,8 +1,9 @@
+from tsp.datagen import SENTINEL
 import torch
 import torch.nn as nn
 import math
 
-from tsp.utils import generate_square_subsequent_mask
+from tsp.utils import generate_square_subsequent_mask, generate_padding_mask, reset_pads
 
 
 class TspEncoder(nn.Module):
@@ -31,11 +32,16 @@ class TspEncoder(nn.Module):
             N = batch dim
             S = seq dim
         """
+        pad_mask = generate_padding_mask(problems)
+
         problems_t = torch.transpose(problems, 0, 1)
         symmetric_input = problems_t * 2 - 1  # [0, 1] --> [-1, 1]
         enc_input = self.embed(symmetric_input)
-        out_t = self.trf_enc(enc_input)
-        return torch.transpose(out_t, 0, 1)
+
+        out_t = self.trf_enc(enc_input, src_key_padding_mask=pad_mask)
+        out = torch.transpose(out_t, 0, 1)
+
+        return reset_pads(out, pad_mask, val=SENTINEL)
 
 
 class PositionalEncoding(nn.Module):
@@ -95,9 +101,13 @@ class TspCritic(nn.Module):
             nn.Linear(dim_model, dim_model), nn.ReLU(), nn.Linear(dim_model, 1)
         )
 
-    def forward(self, node_encodings, selections):
+    def forward(
+        self, node_encodings, selections, node_enc_padding_mask, select_padding_mask
+    ):
         """
-        TODO
+        Note 'selections' must include a start
+        token to provide problem value estimates
+        not conditioned on actor decisions.
         """
         node_encodings_t = torch.transpose(node_encodings, 0, 1)
         selections_t = torch.transpose(selections, 0, 1)
@@ -110,7 +120,15 @@ class TspCritic(nn.Module):
         self_attn_mask = generate_square_subsequent_mask(len(sel_input_pe)).to(
             sel_input_pe.device
         )
-        dec_out = self.trf_dec(sel_input_pe, node_encodings_t, tgt_mask=self_attn_mask)
+        dec_out = self.trf_dec(
+            sel_input_pe,
+            node_encodings_t,
+            tgt_mask=self_attn_mask,
+            tgt_key_padding_mask=select_padding_mask,
+            memory_key_padding_mask=node_enc_padding_mask,
+        )
 
-        vals = self.out(dec_out).squeeze(-1)
-        return torch.transpose(vals, 0, 1)
+        vals_t = self.out(dec_out).squeeze(-1)
+        vals = torch.transpose(vals_t, 0, 1)
+
+        return reset_pads(vals, select_padding_mask, val=SENTINEL)

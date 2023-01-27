@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 
-from tsp.utils import get_costs, get_entropy, batch_dist_gather
+from tsp.utils import get_costs, get_entropy, pad_safe_dist_gather
 from tsp.logger import Logger
 
 
@@ -44,7 +44,7 @@ class TspReinforce(TspAlgoBase):
     def loss(self, selections, select_idxs, log_probs):
         tour_costs = get_costs(selections)
 
-        sel_log_probs = batch_dist_gather(log_probs, select_idxs)
+        sel_log_probs = pad_safe_dist_gather(log_probs, select_idxs, reset_val=0.0)
         tour_log_probs = torch.sum(sel_log_probs, dim=1)
 
         Logger.log_stat("train_cost", tour_costs)
@@ -81,7 +81,7 @@ class TspA2C(TspReinforce):
     def loss(self, selections, select_idxs, log_probs, values):
         tour_costs = get_costs(selections)
 
-        sel_log_probs = batch_dist_gather(log_probs, select_idxs)
+        sel_log_probs = pad_safe_dist_gather(log_probs, select_idxs, reset_val=0.0)
         tour_log_probs = torch.sum(sel_log_probs, dim=1)  # only for logging here
 
         Logger.log_stat("train_cost", tour_costs)
@@ -100,6 +100,61 @@ class TspA2C(TspReinforce):
         actor_loss = torch.mean(
             advantages.detach() * sel_log_probs
         )  # non-negative since using costs, not rewards
+        critic_loss = F.mse_loss(values, tour_costs_repeated)
+
+        Logger.log("actor_loss", actor_loss.item())
+        Logger.log("critic_loss", critic_loss.item())
+
+        return actor_loss + self.critic_coeff * critic_loss
+
+
+class TspSupervisedBase(TspAlgoBase):
+    """
+    Base API for TSP SL algorithms.
+    """
+
+    def optimize_agent(self, agent, problems):
+        """
+        TODO
+        """
+        data, labels = problems
+        agent_outputs = agent.use(data, labels)
+        loss = self.loss(*agent_outputs)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        grad_norm = clip_grad_norm_(agent.parameters(), self.grad_norm_clip)
+        self.optimizer.step()
+
+        Logger.log("loss", loss.item())
+        Logger.log("grad_norm", grad_norm.item())
+
+
+class TspActorCriticSupervised(TspSupervisedBase):
+    """
+    Actor-Critic for supervised TSP.
+
+    Critic is unchanged from RL and tries to predict
+    the undiscounted return of the actor policy.
+    Actor is now trained through a NLL loss on
+    the ground truth labels for each decision.
+    """
+
+    def __init__(self, optimizer, grad_norm_clip="inf", critic_coeff=1.0):
+        super().__init__(optimizer, grad_norm_clip=grad_norm_clip)
+        self.critic_coeff = critic_coeff
+
+    def loss(self, selections, labels, log_probs, values):
+        tour_costs = get_costs(selections)
+
+        tour_costs_repeated = tour_costs.unsqueeze(-1).repeat(1, values.shape[1])
+
+        Logger.log_stat("train_cost", tour_costs)
+        Logger.log_stat("value", values.detach())
+
+        flat_log_probs = log_probs.reshape(-1, log_probs.shape[-1])
+        actor_loss = F.nll_loss(flat_log_probs, labels.flatten())
+
         critic_loss = F.mse_loss(values, tour_costs_repeated)
 
         Logger.log("actor_loss", actor_loss.item())

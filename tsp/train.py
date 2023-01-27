@@ -1,6 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from time import time
 
 from tsp.logger import Logger, get_log_dir
 from tsp.datagen import TspDataset
@@ -12,7 +13,7 @@ class TspTrainer:
     TODO
     """
 
-    def __init__(self, dataset, agent, algo, run_name=None, eval_dataset=None):
+    def __init__(self, dataset, agent, algo, run_name=None, eval_datasets=None):
         """
         Provide TSP data, agent, and algorithm.
 
@@ -31,12 +32,32 @@ class TspTrainer:
         else:
             Logger.dummy_init()
 
-        if isinstance(eval_dataset, TspDataset):
-            self.eval_problems = torch.stack(eval_dataset[:], dim=0)
-        elif isinstance(eval_dataset, torch.Tensor):
-            self.eval_problems = eval_dataset
-        elif eval_dataset is not None:
-            raise ValueError(f"Unrecognized eval_dataset type '{type(eval_dataset)}'")
+        self.eval_data = []
+        for name, eval_dataset in eval_datasets:
+            if isinstance(eval_dataset, TspDataset):
+                self.eval_data.append((name, torch.stack(eval_dataset[:], dim=0)))
+            elif isinstance(eval_dataset, torch.Tensor):
+                self.eval_data.append((name, eval_dataset))
+            elif eval_dataset is not None:
+                raise ValueError(
+                    f"Unrecognized eval_dataset type '{type(eval_dataset)}'"
+                )
+
+    def _offline_eval_routine(self, iteration, eval_period, eval_batch_size):
+        """
+        Run offline evaluation using all provided eval datasets.
+        """
+        if eval_period is not None and iteration % eval_period == 0:
+            for name, problems in self.eval_data:
+                eval_costs = batched_eval(
+                    self.agent, problems, batch_size=eval_batch_size
+                )
+                Logger.log_stat(f"eval_cost_{name}", eval_costs)
+        elif eval_period is not None:
+            for name, _ in self.eval_data:
+                Logger.log_stat(
+                    f"eval_cost_{name}", None
+                )  # null value to satisfy logger
 
     def start(
         self,
@@ -69,7 +90,7 @@ class TspTrainer:
 
         if eval_period is not None:
             assert (
-                self.eval_problems is not None
+                self.eval_data is not None
             ), "Eval period set but no eval dataset provided during init"
             eval_batch_size = (
                 eval_batch_size if eval_batch_size is not None else batch_size
@@ -79,6 +100,7 @@ class TspTrainer:
             )
 
         iteration = 1
+        start_time = time()
         for epoch_idx in range(epochs):
 
             for batch_idx, problem_batch in tqdm(enumerate(dataloader)):
@@ -88,16 +110,11 @@ class TspTrainer:
 
                 # (offline) eval routine
                 self.agent.eval_mode()
-                if eval_period is not None and iteration % eval_period == 0:
-                    eval_costs = batched_eval(
-                        self.agent, self.eval_problems, batch_size=eval_batch_size
-                    )
-                    Logger.log_stat("eval_cost", eval_costs)
-                elif eval_period is not None:
-                    Logger.log_stat("eval_cost", None)  # null value to satisfy logger
+                self._offline_eval_routine(iteration, eval_period, eval_batch_size)
 
                 # log writing, checkpoint saving, etc.
                 Logger.log("iteration", iteration)
+                Logger.log("time", time() - start_time)
                 Logger.dump()
 
                 if iteration % check_period == 0:

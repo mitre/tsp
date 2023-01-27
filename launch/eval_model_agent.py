@@ -41,7 +41,9 @@ agent.eval_mode()
 seed_rand_gen(1234)
 
 # run evals
-print(f"Evaluating agent on {num_tours_eval} tours of size {problem_size}, taking best of {best_of}...")
+print(
+    f"Evaluating agent on {num_tours_eval} tours of size {problem_size}, taking best of {best_of}..."
+)
 min_cost, max_cost, avg_cost, std_cost = evaluate_agent(
     agent, problem_size, num_tours_eval, batch_size, best_of=best_of
 )
