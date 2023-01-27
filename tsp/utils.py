@@ -102,6 +102,15 @@ def is_installed(module_name):
     return module_name in installs
 
 
+def bool_to_additive_mask(mask):
+    mask = (
+        mask.float()
+        .masked_fill(mask == 0, float(0.0))
+        .masked_fill(mask == 1, float("-inf"))
+    )
+    return mask
+
+
 def generate_square_subsequent_mask(sz):
     """
     Taken directly from PyTorch docs:

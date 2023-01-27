@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 from tsp.utils import generate_square_subsequent_mask
@@ -114,3 +115,48 @@ class TspCritic(nn.Module):
 
         vals = self.out(dec_out).squeeze(-1)
         return torch.transpose(vals, 0, 1)
+
+
+class SingleHeadAttnPtr(nn.Module):
+    """
+    Produces single-head attention distribution,
+    which is returned directly. No V or Z values
+    are computes.
+
+    Uses soft attention clipping with tanh following
+    what is done in The Transformer Network for the
+    Travelling Salesman Problem and Attention,
+    Learn to Solve Routing Problems! Clipping is
+    performed before masking like in the latter.
+    """
+
+    def __init__(self, dim_model=128, clip_const=10.0):
+        super().__init__()
+        self.dim_model = dim_model
+        self.clip_const = clip_const
+        self.dim_scale = math.sqrt(dim_model)
+
+        self.Wq = nn.Linear(dim_model, dim_model)
+        self.Wk = nn.Linear(dim_model, dim_model)
+
+    def forward(self, queries, keys, mask):
+        """
+        Expects following shapes:
+            queries (S_q, N, d)
+            keys    (S_k, N, d)
+            mask    (S_q, S_k, N)
+
+        Where mask is an additive float mask
+        (-inf where masking, 0 otherwise).
+
+        Returns log of attention distribution
+        with shape (N, S_q, S_k).
+        """
+        q = self.Wq(queries).permute(1, 0, 2)  # (N, S_q, d)
+        k = self.Wk(keys).permute(1, 2, 0)  # (N, d, S_k)
+
+        raw_attn = torch.matmul(q, k)  # (N, S_q, S_k)
+        clip_attn = self.clip_const * torch.tanh(raw_attn / self.dim_scale)
+        mask_attn = clip_attn + mask
+
+        return F.log_softmax(mask_attn, dim=-1)

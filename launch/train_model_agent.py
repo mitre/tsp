@@ -4,6 +4,7 @@ import torch
 
 from tsp.datagen import TspDataset
 from tsp.model.monty_style import TspMontyStyleModel, TspMsAcModel
+from tsp.model.gpt_style import TspGptPointerModel, TspGptAcModel
 from tsp.agent import TspAgent
 from tsp.algo import TspReinforce, TspA2C
 from tsp.train import TspTrainer
@@ -36,11 +37,10 @@ if __name__ == "__main__":
     eval_dataset = TspDataset(size=args.nodes, num_samples=10000)
 
     # initialize model and agent
-    model = TspMsAcModel(
+    model = TspGptAcModel(
         dim_model=args.model_dim,
-        num_enc_layers=args.n_enc,
-        num_dec_layers=args.n_dec,
-        num_crt_layers=args.n_crt,
+        num_dec_layers=6,
+        value_head_layers=2
     )
     agent = TspAgent(model)
 
