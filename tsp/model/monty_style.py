@@ -256,6 +256,7 @@ class BaselineModel(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.model = model
+        self.device = list(self.model.parameters())[0].device
 
     def forward(self, problems, select_fn):
         selections, select_idxs, log_probs = self.model(problems, select_fn)
@@ -292,5 +293,7 @@ class TspMsGreedyBaselineModel(nn.Module):
     def sync_baseline(self):
         self.critic.load_state_dict(self.actor.state_dict())
 
-    def critic_model(self):
-        return TspAgent(BaselineModel(self.critic), use_available_device=False)
+    def critic_model(self, device):
+        fake_agent = TspAgent(BaselineModel(self.critic), device)
+        fake_agent.to(device)
+        return fake_agent

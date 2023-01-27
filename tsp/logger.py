@@ -17,21 +17,23 @@ def get_log_dir(suffix=""):
 def get_latest_check_path(name, log_dir=None):
     """
     Finds path of latest checkpoint based on
-    run name and logging directory. 
+    run name and logging directory.
     """
     if log_dir is not None:
         log_dir = osp.abspath(osp.expanduser(log_dir))
     else:
         log_dir = get_log_dir()
-    
+
     run_path = osp.join(log_dir, name)
     file_names = [osp.basename(fp) for fp in os.listdir(run_path)]
     chkpts = filter(lambda x: x.startswith("params") and x.endswith(".pt"), file_names)
 
     if not chkpts:
-        raise ValueError(f"Attempting to load checkpoint path from run with no checkpoints in expected format: '{run_path}'")
+        raise ValueError(
+            f"Attempting to load checkpoint path from run with no checkpoints in expected format: '{run_path}'"
+        )
 
-    chkpts = sorted(chkpts, key=lambda x: int(x.split('_')[-1].split('.')[0]))
+    chkpts = sorted(chkpts, key=lambda x: int(x.split("_")[-1].split(".")[0]))
 
     return osp.join(log_dir, name, chkpts[-1])
 
@@ -45,12 +47,12 @@ def get_resume_info(csv_path):
     def extract_content(linestr):
         tokens = linestr.strip().split(",")
         return list(filter(lambda x: x != "", tokens))
-    
+
     header_tokens = extract_content(logs[0])
     last_tokens = extract_content(logs[-1])
 
     req_keys = sorted(header_tokens)
-    
+
     itr_idx = header_tokens.index("iteration")
     time_idx = header_tokens.index("time")
 
@@ -86,7 +88,7 @@ class Logger:
     dummy: bool = False
 
     @classmethod
-    def init(cls, path_dir, csv_name="progress", chk_name="params", resume=False):
+    def init(cls, rank, path_dir, csv_name="progress", chk_name="params", resume=False):
         """
         path_dir: string of directory to store logging info (creates if does not exist)
         csv_name: string of csv file name where logs will get dumped
@@ -102,8 +104,19 @@ class Logger:
         cls.path_dir = path_dir
         cls.csv_name = csv_name
         cls.csv_path = osp.join(
-            osp.abspath(osp.expanduser(path_dir)), csv_name + ".csv"
+            osp.abspath(osp.expanduser(path_dir)), csv_name + str(rank) + ".csv"
         )
+
+        # If the file is short, just get rid of it
+        if not resume and osp.exists(cls.csv_path):
+
+            with open(cls.csv_path, "r") as f:
+                n_lines = len(f.readlines())
+
+            # If its less than 1000, probably okay to just delete
+            if n_lines <= 1000:
+                os.remove(cls.csv_path)
+
         try:
             open(cls.csv_path, "a" if resume else "x")
         except:
@@ -131,7 +144,6 @@ class Logger:
             cls.count = 0
 
         return last_itr, last_time
-
 
     @classmethod
     def dummy_init(cls):
@@ -222,7 +234,8 @@ class Logger:
                 csvl.write("\n")
 
         else:  # print to terminal when dummy logging
-            pprint(cls.store, indent=2)
+            pass
+            # pprint(cls.store, indent=2)
 
         cls.count += 1
         cls.store = dict()

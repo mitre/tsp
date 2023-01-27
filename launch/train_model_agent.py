@@ -1,30 +1,26 @@
 import argparse
+import time
+
+from tsp.model.monty_style import TspMsGreedyBaselineModel
+from tsp.train import TrainingContext
+from tsp.context import DataContext, ModelContext, AlgoContext
+from tsp.algo import TspA2CGreedyRollout
 
 import torch
-from math import ceil
 
-from tsp.datagen import TspLiveDatagen, TspDataset
-from tsp.model.monty_style import (
-    TspMontyStyleModel,
-    TspMsAcModel,
-    TspMsGreedyBaselineModel,
-)
-from tsp.agent import TspAgent
-from tsp.algo import TspReinforce, TspA2C, TspA2CGreedyRollout
-from tsp.train import TspTrainer
-from tsp.logger import get_latest_check_path
+import torch.multiprocessing as mp
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument(
-    "name", nargs="?", default=None, type=str
-)  # logs to <install_path>/runs/<name>/progress.csv (if not provided, no logging occurs)
-parser.add_argument(
-    "--nodes", nargs="+", default=None, type=int
-)  # can be space-separated list of problem sizes
-parser.add_argument(
-    "--node_range", nargs=2, default=None, type=int
-)  # use this or --nodes but not both
+# logs to <install_path>/runs/<name>/progress.csv (if not provided, no logging occurs)
+parser.add_argument("name", nargs="?", default=None, type=str)
+
+# use this or --nodes but not both
+parser.add_argument("--nodes", nargs="+", default=None, type=int)
+
+# can be space-separated list of problem sizes
+parser.add_argument("--node_range", nargs=2, default=None, type=int)
+
 parser.add_argument("--batch_size", default=256, type=int)
 parser.add_argument("--eval_samples", default=10000, type=int)
 parser.add_argument("--eval_batch_size", default=1000, type=int)
@@ -41,89 +37,54 @@ parser.add_argument("--lr", default=1e-5, type=float)
 parser.add_argument("--device", default=None, type=int)
 parser.add_argument("--params", default=None)
 parser.add_argument("--log_dir", default=None)
+parser.add_argument("--keep_check", action="store_true", default=False)
 parser.add_argument("--resume", action="store_true", default=False)
-
-
-def interpret_problem_sizes(args):
-    if args.nodes is not None and args.node_range is not None:
-        raise ValueError("May specify custom '--nodes' or '--node_range' but not both")
-    elif args.node_range is not None:
-        start, end = args.node_range
-        return range(start, end + 1)  # inclusive end bound
-    elif args.nodes is not None:
-        return args.nodes
-    else:
-        return (20,)  # default
-
+# world size
+parser.add_argument("--np", default=1, type=int)
+parser.add_argument("--rank", nargs="+", default=None, type=int)
+parser.add_argument("--gpu", default=None, type=int)
 
 if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    nodes = interpret_problem_sizes(args)
-
-    # create TSP datasets
-    total_samples = ceil(1e3 * args.itr * args.batch_size)
-    dataset = TspLiveDatagen(size=nodes, epoch_size=total_samples)
-
-    eval_datasets = [("all", TspDataset(size=nodes, num_samples=args.eval_samples))]
-
-    if len(nodes) > 1:
-        # also eval on data strictly containing lower and upper problem size bounds
-        low, high = min(nodes), max(nodes)
-        eval_datasets += [
-            (f"{low}n", TspDataset(size=low, num_samples=args.eval_samples))
-        ]
-        eval_datasets += [
-            (f"{high}n", TspDataset(size=high, num_samples=args.eval_samples))
-        ]
-
-    # initialize model and agent
-    model = TspMsGreedyBaselineModel(
-        dim_model=args.model_dim,
-        num_enc_layers=args.n_enc,
-        num_dec_layers=args.n_dec,
+    train_data = DataContext(args.nodes, args.node_range, is_eval=False)
+    eval_data = DataContext(args.nodes, args.node_range, is_eval=True)
+    model_context = ModelContext(
+        TspMsGreedyBaselineModel, args.model_dim, args.n_enc, args.n_dec
     )
-    agent = TspAgent(model, use_available_device=False)
-
-    if args.device is not None:
-        agent.to(args.device)
-    else:
-        args.device = "cpu"
-
-    if args.resume and args.params is not None:
-        raise ValueError("Provided checkpoint to load and --resume flag together are not supported")
-    elif args.resume:
-        check_path = get_latest_check_path(args.name, args.log_dir)
-        agent.load_state_dict(
-            torch.load(check_path, map_location=torch.device(args.device))
-        )
-    elif args.params is not None:
-        agent.load_state_dict(
-            torch.load(args.params, map_location=torch.device(args.device))
-        )
-
-    # initialize algorithm and optimizer
-    optimizer = torch.optim.Adam(agent.parameters(), lr=args.lr)
-    algo = TspA2CGreedyRollout(
-        optimizer, eval_datasets[0][1], grad_norm_clip=args.grad_norm_clip
+    algo_context = AlgoContext(
+        TspA2CGreedyRollout, torch.optim.Adam, args.lr, args.grad_norm_clip
     )
-
-    # build runner and start training
-    runner = TspTrainer(
-        dataset,
-        agent,
-        algo,
+    training_context = TrainingContext(
         args.name,
-        eval_datasets=eval_datasets,
-        log_dir=args.log_dir,
-        resume=args.resume
+        args.batch_size,
+        args.eval_samples,
+        args.eval_batch_size,
+        args.itr,
+        args.check_period,
+        args.eval_period,
+        args.log_dir,
+        args.keep_check,
+        args.resume,
     )
 
-    runner.start(
-        epochs=1,
-        batch_size=args.batch_size,
-        check_period=args.check_period,
-        eval_period=args.eval_period,
-        eval_batch_size=args.eval_batch_size,
-    )
+    train_fn = training_context(model_context, algo_context, train_data, eval_data)
+
+    if isinstance(args.rank, list):
+
+        if len(args.rank) == 1:
+            rank = args.rank[0]
+
+    if args.np == 1:
+        train_fn(0, args.np, gpu=args.gpu)
+    if args.np > 1 and args.rank is None:
+        mp.spawn(train_fn, args=(args.np, args.gpu), nprocs=args.np)
+    else:
+        processes = []
+        for r in args.rank:
+            p = mp.Process(target=train_fn, args=(r, args.np, args.gpu))
+            p.start()
+
+        for p in processes:
+            p.join()

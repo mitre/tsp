@@ -12,14 +12,15 @@ class TspAgent:
     TODO
     """
 
-    def __init__(self, model, use_available_device=True):
-        use_gpu = torch.cuda.is_available() and use_available_device
-        self.device = torch.device("cuda" if use_gpu else "cpu")
+    def __init__(self, model, device, select_fn=sample_select):
 
+        # Easily one of the worst design decisions in pytorch
+        # if hasattr(model, 'module'):
+        #    model = model.module
         self.model = model
-        self.model.to(self.device)
-
-        self.select_fn = sample_select  # defaults to sampling next node
+        self.device = device
+        # defaults to sampling next node
+        self.select_fn = select_fn
 
     def __call__(self, problems):
         """
@@ -51,7 +52,12 @@ class TspAgent:
         WARNING: Assumes these are the first two return vals from model __call__!
         """
         problems = problems.to(self.device)
-        selections, select_idxs = self.model(problems, self.select_fn)[:2]
+
+        model = self.model
+        if hasattr(self.model, "module"):
+            model = self.model.module
+
+        selections, select_idxs = model(problems, self.select_fn)[:2]
         return all_to((selections, select_idxs), device="cpu")
 
     def to(self, cuda_idx):

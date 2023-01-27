@@ -65,7 +65,9 @@ if __name__ == "__main__":
         args.device = "cpu"
 
     if args.resume and args.params is not None:
-        raise ValueError("Provided checkpoint to load and --resume flag together are not supported")
+        raise ValueError(
+            "Provided checkpoint to load and --resume flag together are not supported"
+        )
     elif args.resume:
         check_path = get_latest_check_path(args.name, args.log_dir)
         agent.load_state_dict(
@@ -82,13 +84,13 @@ if __name__ == "__main__":
 
     # build runner and start training
     runner = TspTrainer(
-        dataset, 
-        agent, 
-        algo, 
-        args.name, 
-        eval_datasets=eval_dataset, 
+        dataset,
+        agent,
+        algo,
+        args.name,
+        eval_datasets=eval_dataset,
         log_dir=args.log_dir,
-        resume=args.resume
+        resume=args.resume,
     )
 
     runner.start(

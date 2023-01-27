@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
+import torch.distributed as dist
 
 from tsp.utils import get_costs, get_entropy, pad_safe_dist_gather
 from tsp.eval import batched_eval
@@ -13,7 +14,8 @@ class TspAlgoBase:
     Expects a torch optimizer to be provided.
     """
 
-    def __init__(self, optimizer, grad_norm_clip="inf"):
+    def __init__(self, rank, optimizer, grad_norm_clip="inf"):
+        self.rank = rank
         self.optimizer = optimizer
         self.grad_norm_clip = grad_norm_clip
 
@@ -116,6 +118,7 @@ class TspA2CGreedyRollout(TspAlgoBase):
 
     def __init__(
         self,
+        rank,
         optimizer,
         eval_dataset,
         grad_norm_clip="inf",
@@ -123,7 +126,7 @@ class TspA2CGreedyRollout(TspAlgoBase):
         eval_batch_size=512,
         tolerance=1e-3,
     ):
-        super().__init__(optimizer, grad_norm_clip)
+        super().__init__(rank, optimizer, grad_norm_clip)
         self.eval_dataset = eval_dataset
         self.eval_batch_size = eval_batch_size
         self.tolerance = tolerance
@@ -134,9 +137,8 @@ class TspA2CGreedyRollout(TspAlgoBase):
     def optimize_agent(self, iteration, agent, problems):
 
         # TODO: This is ugly
-        if self.critic_cost is None:
-            critic_agent = agent.model.critic_model()
-            critic_agent.to(agent.device)
+        if self.critic_cost is None and self.rank == 0:
+            critic_agent = agent.model.module.critic_model(agent.device)
             costs = batched_eval(
                 critic_agent,
                 torch.stack(self.eval_dataset.data),
@@ -177,14 +179,20 @@ class TspA2CGreedyRollout(TspAlgoBase):
         return torch.mean(advantages * tour_log_probs)
 
     def _check_baseline_update(self, agent):
-        eval_costs = batched_eval(
-            agent, torch.stack(self.eval_dataset.data), batch_size=self.eval_batch_size
-        )
-        eval_cost = torch.mean(eval_costs)
+        if self.rank == 0:
+            eval_costs = batched_eval(
+                agent,
+                torch.stack(self.eval_dataset.data),
+                batch_size=self.eval_batch_size,
+            )
+            eval_cost = torch.mean(eval_costs)
 
-        if eval_cost < self.critic_cost:
-            agent.model.sync_baseline()
-            self.critic_cost = eval_cost
+            if eval_cost < (self.critic_cost + self.tolerance):
+                agent.model.module.sync_baseline()
+                self.critic_cost = eval_cost
+
+        dist.barrier()
+        agent.model._sync_params_and_buffers(authoritative_rank=0)
 
 
 class TspSupervisedBase(TspAlgoBase):

@@ -6,6 +6,7 @@ import math
 from tqdm import tqdm
 
 from tsp.utils import get_coords, get_costs, batch_select_gather, seed_rand_gen
+from tsp.datagen import TspDataset
 
 
 def batched_eval(agent, problems, batch_size=None):
@@ -15,6 +16,12 @@ def batched_eval(agent, problems, batch_size=None):
     evaluation routines which need to happen on GPU.
     Omit 'batch_size' param to generate all tour costs in one batch.
     """
+
+    # Why do we even have the dataset class if we are going to use it like
+    # this??
+    if isinstance(problems, TspDataset):
+        problems = torch.stack(problems.data, 0)
+
     if batch_size is None:
         batch_size = len(problems)
 
