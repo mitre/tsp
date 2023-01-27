@@ -5,8 +5,7 @@ import torch
 from tsp.utils import get_coords
 from tsp.agent import TspAgent, TspRandomAgent, TspOracleAgent
 from tsp.model.monty_style import TspMontyStyleModel
-
-from base import plot_tsp
+from tsp.draw import plot_tsp
 
 
 def get_tour(problem, solver, model_path=None):

@@ -207,3 +207,27 @@ def perm_shuffle(problems, labels, perms):
     shuf_probs = problems[batch_extract_idxs, perms.flatten()].reshape((b, n, d))
 
     return shuf_probs, relabels
+
+
+class RangeMap:
+    """
+    Dictionary-like object which maps
+    inputs in-range to a specified output.
+    """
+    def __init__(self, partition, values, default=None):
+        assert len(partition) == len(values) + 1
+        assert tuple(sorted(partition)) == tuple(partition)
+        self.partition = partition
+        self.values = values
+        self.default = default
+
+    def __getitem__(self, key):
+        for low, high, val in zip(self.partition[:-1], self.partition[1:], self.values):
+            if key >= low and key < high:
+                return val
+        return self.default
+
+    def __str__(self):
+        tokens = [f"|{low}-->{val}<--{high}|" 
+            for low, high, val in zip(self.partition[:-1], self.partition[1:], self.values)]
+        return "".join(tokens)

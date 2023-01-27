@@ -12,8 +12,7 @@ import tsp
 from tsp.model.monty_style import TspMontyStyleModel, TspMsAcModel
 from tsp.agent import TspAgent, TspOracleAgent
 from tsp.utils import get_coords
-
-from base import plot_tsp
+from tsp.draw import plot_tsp
 
 
 # TSP parameters and save id

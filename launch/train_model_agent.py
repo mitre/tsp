@@ -13,6 +13,7 @@ from tsp.agent import TspAgent
 from tsp.algo import TspReinforce, TspA2C, TspA2CGreedyRollout
 from tsp.train import TspTrainer
 from tsp.logger import get_latest_check_path
+from tsp.utils import RangeMap
 
 parser = argparse.ArgumentParser()
 
@@ -42,6 +43,9 @@ parser.add_argument("--device", default=None, type=int)
 parser.add_argument("--params", default=None)
 parser.add_argument("--log_dir", default=None)
 parser.add_argument("--resume", action="store_true", default=False)
+parser.add_argument("--num_draw", default=0, type=int)  # per eval dataset
+parser.add_argument("--draw_spec", nargs="+", default=None, type=int)
+# --draw_spec W X Y Z == period W until itr X (thousands), then period Y until Z, etc.
 
 
 def interpret_problem_sizes(args):
@@ -109,6 +113,16 @@ if __name__ == "__main__":
         optimizer, eval_datasets[0][1], grad_norm_clip=args.grad_norm_clip
     )
 
+    # construct draw period range map
+    if args.draw_spec is not None:
+        assert len(args.draw_spec) % 2 == 0, "Invalid draw spec format, see docs next to definition"
+        partition = (0, *args.draw_spec[1::2])
+        partition = [1000 * p for p in partition]
+        values = (*args.draw_spec[::2],)
+        draw_period_map = RangeMap(partition, values)
+    else:
+        draw_period_map = None
+
     # build runner and start training
     runner = TspTrainer(
         dataset,
@@ -116,6 +130,7 @@ if __name__ == "__main__":
         algo,
         args.name,
         eval_datasets=eval_datasets,
+        num_tours_draw=args.num_draw,
         log_dir=args.log_dir,
         resume=args.resume
     )
@@ -126,4 +141,5 @@ if __name__ == "__main__":
         check_period=args.check_period,
         eval_period=args.eval_period,
         eval_batch_size=args.eval_batch_size,
+        draw_period_map=draw_period_map
     )

@@ -31,7 +31,7 @@ SOFTWARE.
 import numpy as np
 
 
-def plot_tsp(xy, tour, ax1):
+def plot_tsp(xy, tour, ax1, solution_tour=None, base_col="black", sol_col="green"):
     """
     Plot the TSP tour on matplotlib axis ax1.
     """
@@ -52,8 +52,33 @@ def plot_tsp(xy, tour, ax1):
     # Starting node
     ax1.scatter([xs[0]], [ys[0]], s=100, color="red")
 
-    # Arcs
-    qv = ax1.quiver(
+    # Add light green oracle trace in background, if provided
+    if solution_tour is not None:
+        xso, yso = np.split(xy[solution_tour], 2, axis=-1)  # 'o' for oracle
+        dxo = np.roll(xso, -1) - xso
+        dyo = np.roll(yso, -1) - yso
+        do = np.sqrt(dxo * dxo + dyo * dyo)
+        lengths_oracle = do.cumsum()
+
+        ax1.quiver(
+            xso,
+            yso,
+            dxo,
+            dyo,
+            scale_units="xy",
+            angles="xy",
+            scale=1,
+            width=0.001,
+            color=sol_col
+        )
+
+        title_str = "{} nodes, total length {:.2f} ({:.2f})".format(len(tour), lengths[-1], lengths_oracle[-1])
+
+    else:
+        title_str = "{} nodes, total length {:.2f}".format(len(tour), lengths[-1])
+
+    # Primary tour arcs
+    ax1.quiver(
         xs,
         ys,
         dx,
@@ -62,6 +87,7 @@ def plot_tsp(xy, tour, ax1):
         angles="xy",
         scale=1,
         width=0.002,
+        color=base_col
     )
 
-    ax1.set_title("{} nodes, total length {:.2f}".format(len(tour), lengths[-1]))
+    ax1.set_title(title_str)
