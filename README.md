@@ -1,6 +1,10 @@
 # tsp
 Deep RL + Pointer Nets for the Travelling Salesman Problem
 
+https://github.com/mitre/tsp/assets/121506309/78055747-5197-4f98-8bf7-bd8bec5d3373
+
+*Snapshot of performance on a held-out example every 100 model updates of DRL training on 20-city TSP. The green line indicates the optimal tour (found with PyConcorde) which has a length of 3.66. The blue dot indicates the agent's starting city selection, which doesn't affect the optimization objective.*
+
 ## Installation
 _This has been tested on Python 3.7, but will likely work for Python>=3.6_
 
