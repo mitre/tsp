@@ -4,3 +4,4 @@ matplotlib
 visdom
 tqdm
 requests
+plotly
