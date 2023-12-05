@@ -6,7 +6,7 @@ from math import ceil
 from tsp.datagen import TspLiveDatagen, TspDataset
 from tsp.model.monty_style import TspMontyStyleModel, TspMsAcModel
 from tsp.agent import TspAgent
-from tsp.algo import TspReinforce, TspA2C
+from tsp.algo import TspReinforce, TspA2C, TspPPO
 from tsp.train import TspTrainer
 
 parser = argparse.ArgumentParser()
@@ -34,6 +34,10 @@ parser.add_argument("--n_dec", default=6, type=int)
 parser.add_argument("--n_crt", default=6, type=int)
 parser.add_argument("--lr", default=1e-5, type=float)
 parser.add_argument("--device", default=None, type=int)
+parser.add_argument("--algo", default="ppo", choices=["a2c", "ppo"], type=str, help="train with compositional A2C or PPO; defaults to PPO")
+parser.add_argument("--minibatch_epochs", default=1, type=int, help="PPO only; number of minibatch epochs aka how many times to use data before getting new samples")
+parser.add_argument("--minibatches", default=1, type=int, help="PPO only; how many minibatches (gradient updates) to take per minibatch_epoch")
+parser.add_argument("--ratio_clip", default=0.1, type=float, help="PPO only; clamp threshold during creation of surrogate objectives in loss (smaller means more stable but more constrained gradient updates)")
 
 
 def interpret_problem_sizes(args):
@@ -84,8 +88,22 @@ if __name__ == "__main__":
 
     # initialize algorithm and optimizer
     optimizer = torch.optim.Adam(agent.parameters(), lr=args.lr)
-    algo = TspA2C(
-        optimizer, grad_norm_clip=args.grad_norm_clip, critic_coeff=args.critic_coeff
+
+    if args.algo == "ppo":
+        AlgoCls = TspPPO
+        extra_algo_kwargs = dict(
+            epochs=args.minibatch_epochs,
+            minibatches=args.minibatches,
+            ratio_clip=args.ratio_clip
+        )
+    elif args.algo == "a2c":
+        AlgoCls = TspA2C
+        extra_algo_kwargs = dict()  # no extra kwargs
+    else:
+        raise Exception(f"Unrecognized training algorithm '{args.algo}'")
+
+    algo = AlgoCls(
+        optimizer, grad_norm_clip=args.grad_norm_clip, critic_coeff=args.critic_coeff, **extra_algo_kwargs
     )
 
     # build runner and start training
