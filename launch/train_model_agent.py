@@ -20,7 +20,7 @@ parser.add_argument(
 parser.add_argument(
     "--node_range", nargs=2, default=None, type=int
 )  # use this or --nodes but not both
-parser.add_argument("--batch_size", default=256, type=int)
+parser.add_argument("--batch_size", default=1024, type=int)
 parser.add_argument("--eval_samples", default=10000, type=int)
 parser.add_argument("--eval_batch_size", default=1000, type=int)
 parser.add_argument("--itr", default=250, type=float, help="in thousands")
@@ -36,7 +36,7 @@ parser.add_argument("--lr", default=1e-5, type=float)
 parser.add_argument("--device", default=None, type=int)
 parser.add_argument("--algo", default="ppo", choices=["a2c", "ppo"], type=str, help="train with compositional A2C or PPO; defaults to PPO")
 parser.add_argument("--minibatch_epochs", default=1, type=int, help="PPO only; number of minibatch epochs aka how many times to use data before getting new samples")
-parser.add_argument("--minibatches", default=1, type=int, help="PPO only; how many minibatches (gradient updates) to take per minibatch_epoch")
+parser.add_argument("--minibatches", default=4, type=int, help="PPO only; how many minibatches (gradient updates) to take per minibatch_epoch")
 parser.add_argument("--ratio_clip", default=0.1, type=float, help="PPO only; clamp threshold during creation of surrogate objectives in loss (smaller means more stable but more constrained gradient updates)")
 
 
