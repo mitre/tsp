@@ -174,7 +174,7 @@ class TspPPO(TspA2C):
         # gather pre-determined selection sequences for PPO minibatch updates (can't re-roll-out each time when comparing with old_log_probs in PPO objective)
         # and gather starting policy distributions for PPO importance sampling ratio
         with torch.no_grad():
-            _, old_select_idxs, old_log_probs, _ = agent(problems)
+            _, old_select_idxs, old_log_probs, old_values = agent(problems)
 
         # determine minibatch sample size
         batch_size = len(problems)
@@ -187,6 +187,7 @@ class TspPPO(TspA2C):
                 problems_mb = problems[mb_idxs]
                 select_idxs_mb = old_select_idxs[mb_idxs]
                 old_log_probs_mb = old_log_probs[mb_idxs]
+                old_values_mb = old_values[mb_idxs]
 
                 # compute model outputs with gradient tracking
                 selections, re_select_idxs, log_probs, values = agent.use(problems_mb, select_idxs_mb)
@@ -195,7 +196,7 @@ class TspPPO(TspA2C):
                 assert torch.allclose(select_idxs_mb.float(), re_select_idxs.float())
 
                 # compute PPO clip loss
-                loss = self.loss(selections, select_idxs_mb, log_probs, old_log_probs_mb, values)
+                loss = self.loss(selections, select_idxs_mb, log_probs, old_log_probs_mb, values, old_values_mb)
 
                 # optimization step
                 self.optimizer.zero_grad()
@@ -209,7 +210,7 @@ class TspPPO(TspA2C):
 
         self._log_buffer()
 
-    def loss(self, selections, select_idxs, log_probs, old_log_probs, values):
+    def loss(self, selections, select_idxs, log_probs, old_log_probs, values, old_values):
         tour_costs = get_costs(selections)
 
         sel_log_probs = pad_safe_dist_gather(log_probs, select_idxs, reset_val=0.0)
@@ -220,26 +221,30 @@ class TspPPO(TspA2C):
         self._save_on_buffer("train_cost", tour_costs)
         self._save_on_buffer("log_pi", tour_log_probs)
         self._save_on_buffer("entropy", get_entropy(log_probs))
+        self._save_on_buffer("pi_drift", torch.exp(sel_log_probs.detach()) - torch.exp(old_sel_log_probs))
+        self._save_on_buffer("abs_pi_drift", torch.abs(torch.exp(sel_log_probs.detach()) - torch.exp(old_sel_log_probs)))
 
         tour_costs_repeated = tour_costs.unsqueeze(-1).repeat(1, values.shape[1])
 
         # decision-level advantages
         # (removing last index based on value predictions where all selections have been made)
-        advantages = (tour_costs_repeated - values)[:, :-1]
+        advantages = (tour_costs_repeated - old_values)[:, :-1]
 
         self._save_on_buffer("value", values)
         self._save_on_buffer("advantage", advantages)
+        self._save_on_buffer("value_drift", values.detach() - old_values)
+        self._save_on_buffer("abs_value_drift", torch.abs(values.detach() - old_values))
 
         # compute PPO clip ratio and surrogate objective (old_log_probs should already have no tracked gradients, but detaching just in case)
         importance_ratio = torch.exp(sel_log_probs - old_sel_log_probs.detach())
         clipped_ratio = torch.clamp(importance_ratio, 1. - self.ratio_clip, 1. + self.ratio_clip)
 
-        surr_1 = importance_ratio * advantages.detach()
+        surr_1 = importance_ratio * advantages.detach()  # advantages should already not have tracked gradients, but detaching just to be safe
         surr_2 = clipped_ratio * advantages.detach()
-        surrogate_objective = torch.min(surr_1, surr_2)
+        surrogate_objective = -torch.max(surr_1, surr_2)  # -max(-x, -y) == min(x, y) --> surrogates actually have sign flipped since we use costs, not rewards
 
         # compute PPO clip loss over non-pad (i.e. gradient-tracked actor and critic) decisions
-        actor_loss = torch.mean(surrogate_objective)  # non-negative since using costs, not rewards
+        actor_loss = -torch.mean(surrogate_objective)
         critic_loss = F.mse_loss(values, tour_costs_repeated)
 
         self._save_on_buffer("actor_loss", actor_loss)
